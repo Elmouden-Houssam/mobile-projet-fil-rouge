@@ -1,0 +1,231 @@
+<?php
+require_once "connexion.php";
+
+$error = null;
+$id = isset($_GET["id"]) ? (int)$_GET["id"] : 0;
+
+$stmt = $pdo->prepare("SELECT * FROM article WHERE id_article = ?");
+$stmt->execute([$id]);
+$article = $stmt->fetch(PDO::FETCH_ASSOC);
+
+if (!$article) {
+    header("Location: index.php");
+    exit;
+}
+
+$categories = $pdo->query("SELECT * FROM type_lot ORDER BY id_type ASC")->fetchAll(PDO::FETCH_ASSOC);
+
+$categoryIcons = [
+    'Électronique' => '⚡',
+    'Téléphones'   => '📱',
+    'Ordinateurs'  => '💻',
+    'Voitures'     => '🚗',
+    'Mode'         => '👗',
+    'Bijoux'       => '💎',
+    'Maison'       => '🏠',
+    'Jeux vidéo'   => '🎮',
+    'Sport'        => '⚽',
+    'Art'          => '🎨',
+];
+
+if ($_SERVER["REQUEST_METHOD"] === "POST") {
+    try {
+        $imagePath = $article['image']; // keep existing image by default
+
+        // Handle new image upload
+        if (isset($_FILES['image']) && $_FILES['image']['error'] === UPLOAD_ERR_OK) {
+            $uploadDir = 'uploads/';
+            if (!is_dir($uploadDir)) {
+                mkdir($uploadDir, 0755, true);
+            }
+
+            $allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+            $fileType = mime_content_type($_FILES['image']['tmp_name']);
+
+            if (!in_array($fileType, $allowedTypes)) {
+                throw new Exception("Type de fichier non autorisé. Utilisez JPG, PNG, GIF ou WEBP.");
+            }
+
+            if ($_FILES['image']['size'] > 5 * 1024 * 1024) {
+                throw new Exception("L'image ne doit pas dépasser 5 Mo.");
+            }
+
+            $extension = pathinfo($_FILES['image']['name'], PATHINFO_EXTENSION);
+            $filename = uniqid('article_') . '.' . $extension;
+            $newImagePath = $uploadDir . $filename;
+
+            if (!move_uploaded_file($_FILES['image']['tmp_name'], $newImagePath)) {
+                throw new Exception("Erreur lors de l'upload de l'image.");
+            }
+
+            // Delete old image if it exists
+            if ($imagePath && file_exists($imagePath)) {
+                unlink($imagePath);
+            }
+
+            $imagePath = $newImagePath;
+        }
+
+        $id_type = isset($_POST["id_type"]) && !empty($_POST["id_type"]) ? (int)$_POST["id_type"] : $article['id_type'];
+
+        $stmt = $pdo->prepare("
+            UPDATE article
+            SET titre = ?, description = ?, prix_depart = ?, date_debut = ?, date_fin = ?, image = ?, id_type = ?
+            WHERE id_article = ?
+        ");
+
+        $stmt->execute([
+            $_POST["titre"],
+            $_POST["description"],
+            $_POST["prix_depart"],
+            $_POST["date_debut"],
+            $_POST["date_fin"],
+            $imagePath,
+            $id_type,
+            $id
+        ]);
+
+        header("Location: index.php?success=modified");
+        exit;
+    } catch (Exception $e) {
+        $error = $e->getMessage();
+    }
+}
+?>
+
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Modifier l'article — Plateforme d'Enchères</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- Header -->
+<header class="header">
+    <div class="header-inner">
+        <a href="index.php" class="logo">◆ Plateforme d'Enchères</a>
+        <nav class="nav">
+            <a href="index.php" class="nav-link">Accueil</a>
+            <a href="ajouter.php" class="btn btn-primary">+ Ajouter un article</a>
+        </nav>
+    </div>
+</header>
+
+<div class="form-container">
+    <div class="form-card">
+        <h1 class="form-title">Modifier l'article</h1>
+        <p class="form-subtitle">Modifiez les informations de votre article.</p>
+
+        <?php if ($error): ?>
+        <div class="toast toast-error" style="position:static; margin-bottom:20px;">
+            <span>✕</span>
+            <span><?= htmlspecialchars($error) ?></span>
+        </div>
+        <?php endif; ?>
+
+        <form method="POST" enctype="multipart/form-data">
+            <div class="form-group">
+                <label for="titre">Titre</label>
+                <input type="text" id="titre" name="titre" placeholder="Titre de l'article" required
+                       value="<?= htmlspecialchars($article['titre']) ?>">
+            </div>
+
+            <div class="form-group">
+                <label for="id_type">Catégorie</label>
+                <select id="id_type" name="id_type" required>
+                    <option value="">-- Sélectionner une catégorie --</option>
+                    <?php foreach ($categories as $cat): ?>
+                        <option value="<?= $cat['id_type'] ?>" <?= ($article['id_type'] == $cat['id_type']) ? 'selected' : '' ?>>
+                            <?= (isset($categoryIcons[$cat['nom_type']]) ? $categoryIcons[$cat['nom_type']] . ' ' : '🏷️ ') . htmlspecialchars($cat['nom_type']) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="description">Description</label>
+                <textarea id="description" name="description" placeholder="Décrivez votre article..."><?= htmlspecialchars($article['description']) ?></textarea>
+            </div>
+
+            <div class="form-group">
+                <label for="prix_depart">Prix de départ (DH)</label>
+                <input type="number" step="0.01" min="0" id="prix_depart" name="prix_depart" placeholder="0.00" required
+                       value="<?= htmlspecialchars($article['prix_depart']) ?>">
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="date_debut">Date de début</label>
+                    <input type="datetime-local" id="date_debut" name="date_debut" required
+                           value="<?= date('Y-m-d\TH:i', strtotime($article['date_debut'])) ?>">
+                </div>
+                <div class="form-group">
+                    <label for="date_fin">Date de fin</label>
+                    <input type="datetime-local" id="date_fin" name="date_fin" required
+                           value="<?= date('Y-m-d\TH:i', strtotime($article['date_fin'])) ?>">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Image</label>
+                <div class="image-upload">
+                    <?php if (!empty($article['image']) && file_exists($article['image'])): ?>
+                    <div class="image-preview" id="currentImage">
+                        <img src="<?= htmlspecialchars($article['image']) ?>" alt="Image actuelle">
+                        <p style="font-size:0.8rem; color:var(--text-muted); margin-top:8px;">Image actuelle — Sélectionnez une nouvelle image pour la remplacer</p>
+                    </div>
+                    <?php endif; ?>
+                    <div class="image-upload-area" onclick="document.getElementById('image').click()">
+                        <div class="image-upload-icon">📷</div>
+                        <div class="image-upload-text">
+                            <?= !empty($article['image']) ? 'Changer l\'image' : 'Cliquez pour choisir une image' ?>
+                        </div>
+                        <div class="image-upload-text" style="font-size:0.75rem; margin-top:4px;">JPG, PNG, GIF, WEBP — Max 5 Mo</div>
+                    </div>
+                    <input type="file" id="image" name="image" accept="image/*" style="display:none" onchange="previewImage(this)">
+                    <div class="image-preview" id="imagePreview" style="display:none">
+                        <img id="imagePreviewImg" src="" alt="Aperçu">
+                        <p style="font-size:0.8rem; color:var(--text-muted); margin-top:8px;">Nouvelle image sélectionnée</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-actions">
+                <a href="index.php" class="btn btn-neutral">Annuler</a>
+                <button type="submit" class="btn btn-primary">Enregistrer les modifications</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<footer class="footer">
+    <p>© 2026 Plateforme d'Enchères — Tous droits réservés</p>
+</footer>
+
+<script>
+function previewImage(input) {
+    var preview = document.getElementById('imagePreview');
+    var previewImg = document.getElementById('imagePreviewImg');
+    var currentImage = document.getElementById('currentImage');
+
+    if (input.files && input.files[0]) {
+        var reader = new FileReader();
+        reader.onload = function(e) {
+            previewImg.src = e.target.result;
+            preview.style.display = 'block';
+            if (currentImage) currentImage.style.display = 'none';
+        };
+        reader.readAsDataURL(input.files[0]);
+    } else {
+        preview.style.display = 'none';
+        previewImg.src = '';
+        if (currentImage) currentImage.style.display = 'block';
+    }
+}
+</script>
+
+</body>
+</html>
